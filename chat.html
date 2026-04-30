@@ -1,0 +1,902 @@
+<!-- chat.html -->
+<!DOCTYPE html>
+<html lang="de">
+
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pulse Chat</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+
+<body class="app-page">
+  <div class="app-shell">
+    <aside class="sidebar card">
+      <div class="sidebar-top">
+        <div class="brand-row">
+          <div class="brand-mark brand-mark-sm">P</div>
+          <div>
+            <strong>Pulse Chat</strong>
+            <div class="muted tiny">Freunde. Chat. Profile.</div>
+          </div>
+        </div>
+
+        <button id="logoutBtn" class="btn btn-ghost btn-sm" type="button">Logout</button>
+      </div>
+
+      <section class="profile-summary card-soft">
+        <div class="avatar avatar-lg" id="currentAvatar"></div>
+        <div class="profile-summary-copy">
+          <strong id="currentName">—</strong>
+          <div class="muted tiny" id="currentEmail">—</div>
+          <div class="tiny status-line" id="currentOnlineState">—</div>
+        </div>
+      </section>
+
+      <section class="stack">
+        <div class="section-head">
+          <h3>Suche</h3>
+          <span class="muted tiny">Live</span>
+        </div>
+        <label class="field field-compact">
+          <input id="searchInput" type="text" placeholder="Name oder E-Mail suchen" />
+        </label>
+        <div id="searchResults" class="list-stack"></div>
+      </section>
+
+      <section class="stack">
+        <div class="section-head">
+          <h3>Freunde</h3>
+          <span class="muted tiny" id="friendsCount">0</span>
+        </div>
+        <div id="friendsList" class="list-stack"></div>
+      </section>
+
+      <section class="stack">
+        <div class="section-head">
+          <h3>Eingehende Anfragen</h3>
+          <span class="muted tiny" id="incomingCount">0</span>
+        </div>
+        <div id="incomingRequestsList" class="list-stack"></div>
+      </section>
+
+      <section class="stack">
+        <div class="section-head">
+          <h3>Ausgehende Anfragen</h3>
+          <span class="muted tiny" id="outgoingCount">0</span>
+        </div>
+        <div id="outgoingRequestsList" class="list-stack"></div>
+      </section>
+
+      <section class="stack">
+        <div class="section-head">
+          <h3>Blockiert</h3>
+          <span class="muted tiny" id="blockedCount">0</span>
+        </div>
+        <div id="blockedUsersList" class="list-stack"></div>
+      </section>
+
+      <section class="stack">
+        <div class="section-head">
+          <h3>Profil</h3>
+          <span class="muted tiny">Bearbeiten</span>
+        </div>
+
+        <form id="profileForm" class="profile-form card-soft">
+          <label class="field field-compact">
+            <span>Name</span>
+            <input id="profileName" type="text" placeholder="Dein Name" required />
+          </label>
+
+          <label class="field field-compact">
+            <span>Bio</span>
+            <textarea id="profileBio" rows="3" placeholder="Kurze Beschreibung"></textarea>
+          </label>
+
+          <label class="field field-compact">
+            <span>Profilbild URL</span>
+            <input id="profilePhotoURL" type="url" placeholder="https://..." />
+          </label>
+
+          <label class="field field-compact">
+            <span>Profilbild Datei</span>
+            <input id="profilePhotoFile" type="file" accept="image/*" />
+          </label>
+
+          <button class="btn btn-primary btn-full" type="submit">Profil speichern</button>
+        </form>
+      </section>
+    </aside>
+
+    <main class="workspace">
+      <header class="workspace-header card">
+        <div class="chat-peer">
+          <div class="avatar" id="selectedAvatar"></div>
+          <div class="chat-peer-copy">
+            <strong id="selectedName">Keine Unterhaltung gewählt</strong>
+            <div class="muted tiny" id="selectedMeta">Suche eine Person oder wähle einen Freund aus.</div>
+          </div>
+        </div>
+
+        <div class="chat-actions" id="chatActions"></div>
+      </header>
+
+      <section class="messages-panel card">
+        <div id="messagesContainer" class="messages-list"></div>
+
+        <div class="composer-wrap">
+          <form id="messageForm" class="composer">
+            <textarea id="messageInput" rows="1" placeholder="Nachricht schreiben..." disabled></textarea>
+            <button class="btn btn-primary" type="submit" id="sendBtn" disabled>Senden</button>
+          </form>
+          <div class="muted tiny composer-hint" id="composerHint">
+            Wähle einen Freund, um zu schreiben.
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script type="module">
+    import { auth, db } from './js/firebase.js';
+    import { authStateListener, logout } from './js/auth.js';
+    import {
+      acceptRequest,
+      blockUser,
+      cancelRequest,
+      getRelationshipStatus,
+      loadBlockedUsers,
+      loadFriends,
+      loadIncomingRequests,
+      loadOutgoingRequests,
+      rejectRequest,
+      removeFriend,
+      searchUsers,
+      sendRequest,
+      unblockUser,
+      listenFriends,
+      listenIncomingRequests,
+      listenOutgoingRequests,
+      listenBlockedUsers
+    } from './js/friends.js';
+    import { createOrGetChat, renderMessages, listenMessages, stopListeningMessages, sendMessage } from './js/chat.js';
+    import { loadProfile, updateProfile, uploadProfileImage } from './js/profile.js';
+    import { debounce, initials, formatDate, showToast, safeText } from './js/utils.js';
+
+    const $ = (id) => document.getElementById(id);
+
+    const logoutBtn = $('logoutBtn');
+
+    const currentAvatar = $('currentAvatar');
+    const currentName = $('currentName');
+    const currentEmail = $('currentEmail');
+    const currentOnlineState = $('currentOnlineState');
+
+    const searchInput = $('searchInput');
+    const searchResults = $('searchResults');
+
+    const friendsList = $('friendsList');
+    const incomingRequestsList = $('incomingRequestsList');
+    const outgoingRequestsList = $('outgoingRequestsList');
+    const blockedUsersList = $('blockedUsersList');
+
+    const friendsCount = $('friendsCount');
+    const incomingCount = $('incomingCount');
+    const outgoingCount = $('outgoingCount');
+    const blockedCount = $('blockedCount');
+
+    const profileForm = $('profileForm');
+    const profileName = $('profileName');
+    const profileBio = $('profileBio');
+    const profilePhotoURL = $('profilePhotoURL');
+    const profilePhotoFile = $('profilePhotoFile');
+
+    const selectedAvatar = $('selectedAvatar');
+    const selectedName = $('selectedName');
+    const selectedMeta = $('selectedMeta');
+    const chatActions = $('chatActions');
+
+    const messagesContainer = $('messagesContainer');
+    const messageForm = $('messageForm');
+    const messageInput = $('messageInput');
+    const sendBtn = $('sendBtn');
+    const composerHint = $('composerHint');
+
+    let currentUser = null;
+    let currentProfile = null;
+    let selectedPeer = null;
+    let selectedRelationship = null;
+    let activeSearchTerm = '';
+    let listenersReady = false;
+    let friendsData = [];
+    let incomingData = [];
+    let outgoingData = [];
+    let blockedData = [];
+    let friendsUnsub = null;
+    let incomingUnsub = null;
+    let outgoingUnsub = null;
+    let blockedUnsub = null;
+
+    function setAvatar(el, user) {
+      if (!el) return;
+      el.innerHTML = '';
+      const url = user?.photoURL || '';
+      if (url) {
+        const img = document.createElement('img');
+        img.src = url;
+        img.alt = user?.name || 'Avatar';
+        img.referrerPolicy = 'no-referrer';
+        el.appendChild(img);
+        return;
+      }
+      el.textContent = initials(user?.name || user?.email || 'U');
+    }
+
+    function makeCardLine(user, subtitle) {
+      const wrap = document.createElement('button');
+      wrap.type = 'button';
+      wrap.className = 'list-item card-soft';
+
+      const left = document.createElement('div');
+      left.className = 'list-item-main';
+
+      const avatar = document.createElement('div');
+      avatar.className = 'avatar avatar-sm';
+      setAvatar(avatar, user);
+
+      const textBox = document.createElement('div');
+      textBox.className = 'list-item-copy';
+
+      const title = document.createElement('strong');
+      title.textContent = user?.name || 'Unbekannt';
+
+      const meta = document.createElement('div');
+      meta.className = 'muted tiny';
+      meta.textContent = subtitle || user?.email || '';
+
+      textBox.append(title, meta);
+      left.append(avatar, textBox);
+      wrap.append(left);
+      return wrap;
+    }
+
+    function clearNode(node) {
+      node.replaceChildren();
+    }
+
+    function updateProfileEditor(profile) {
+      profileName.value = profile?.name || '';
+      profileBio.value = profile?.bio || '';
+      profilePhotoURL.value = profile?.photoURL || '';
+    }
+
+    function renderCurrentUser(profile) {
+      currentProfile = profile;
+      setAvatar(currentAvatar, profile);
+      currentName.textContent = profile?.name || currentUser?.displayName || '—';
+      currentEmail.textContent = profile?.email || currentUser?.email || '—';
+      currentOnlineState.textContent = profile?.online ? 'Online' : 'Offline';
+      updateProfileEditor(profile);
+    }
+
+    function statusBadge(label, kind = 'neutral') {
+      const span = document.createElement('span');
+      span.className = `badge badge-${kind}`;
+      span.textContent = label;
+      return span;
+    }
+
+    function createActionButton(label, cls, handler) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `btn ${cls} btn-sm`;
+      btn.textContent = label;
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await handler();
+      });
+      return btn;
+    }
+
+    async function refreshCounts() {
+      friendsCount.textContent = String(friendsData.length);
+      incomingCount.textContent = String(incomingData.length);
+      outgoingCount.textContent = String(outgoingData.length);
+      blockedCount.textContent = String(blockedData.length);
+    }
+
+    async function renderChatActions() {
+      clearNode(chatActions);
+
+      if (!selectedPeer) {
+        return;
+      }
+
+      const rel = selectedRelationship || { status: 'NONE', blockedByMe: false };
+
+      if (rel.status === 'FRIENDS') {
+        chatActions.append(
+          createActionButton('Chat öffnen', 'btn-soft', async () => {
+            await openChatForSelectedPeer();
+          }),
+          createActionButton('Entfernen', 'btn-danger', async () => {
+            const ok = confirm(`Freund entfernen: ${selectedPeer.name}?`);
+            if (!ok) return;
+            await removeFriend(selectedPeer.uid);
+            showToast('Freund entfernt', 'success');
+            await refreshAllLists();
+            await refreshSelectedPeer();
+          }),
+          createActionButton('Blockieren', 'btn-ghost', async () => {
+            const ok = confirm(`User blockieren: ${selectedPeer.name}?`);
+            if (!ok) return;
+            await blockUser(selectedPeer.uid);
+            showToast('User blockiert', 'success');
+            await refreshAllLists();
+            await refreshSelectedPeer();
+          })
+        );
+        return;
+      }
+
+      if (rel.status === 'REQUEST_SENT') {
+        chatActions.append(
+          createActionButton('Anfrage zurückziehen', 'btn-danger', async () => {
+            await cancelRequest(selectedPeer.uid);
+            showToast('Anfrage zurückgezogen', 'success');
+            await refreshAllLists();
+            await refreshSelectedPeer();
+          }),
+          createActionButton('Blockieren', 'btn-ghost', async () => {
+            const ok = confirm(`User blockieren: ${selectedPeer.name}?`);
+            if (!ok) return;
+            await blockUser(selectedPeer.uid);
+            showToast('User blockiert', 'success');
+            await refreshAllLists();
+            await refreshSelectedPeer();
+          })
+        );
+        return;
+      }
+
+      if (rel.status === 'REQUEST_RECEIVED') {
+        chatActions.append(
+          createActionButton('Annehmen', 'btn-primary', async () => {
+            await acceptRequest(selectedPeer.uid);
+            showToast('Freundschaft bestätigt', 'success');
+            await refreshAllLists();
+            await refreshSelectedPeer();
+            await openChatForSelectedPeer();
+          }),
+          createActionButton('Ablehnen', 'btn-soft', async () => {
+            await rejectRequest(selectedPeer.uid);
+            showToast('Anfrage abgelehnt', 'success');
+            await refreshAllLists();
+            await refreshSelectedPeer();
+          }),
+          createActionButton('Blockieren', 'btn-ghost', async () => {
+            const ok = confirm(`User blockieren: ${selectedPeer.name}?`);
+            if (!ok) return;
+            await blockUser(selectedPeer.uid);
+            showToast('User blockiert', 'success');
+            await refreshAllLists();
+            await refreshSelectedPeer();
+          })
+        );
+        return;
+      }
+
+      if (rel.status === 'BLOCKED') {
+        if (rel.blockedByMe) {
+          chatActions.append(
+            createActionButton('Entblocken', 'btn-primary', async () => {
+              await unblockUser(selectedPeer.uid);
+              showToast('User entblockt', 'success');
+              await refreshAllLists();
+              await refreshSelectedPeer();
+            })
+          );
+        } else {
+          chatActions.append(statusBadge('Von dir nicht zugänglich', 'danger'));
+        }
+        return;
+      }
+
+      chatActions.append(
+        createActionButton('Anfrage senden', 'btn-primary', async () => {
+          await sendRequest(selectedPeer.uid);
+          showToast('Anfrage gesendet', 'success');
+          await refreshAllLists();
+          await refreshSelectedPeer();
+        }),
+        createActionButton('Blockieren', 'btn-ghost', async () => {
+          const ok = confirm(`User blockieren: ${selectedPeer.name}?`);
+          if (!ok) return;
+          await blockUser(selectedPeer.uid);
+          showToast('User blockiert', 'success');
+          await refreshAllLists();
+          await refreshSelectedPeer();
+        })
+      );
+    }
+
+    function setComposerEnabled(enabled, hint) {
+      messageInput.disabled = !enabled;
+      sendBtn.disabled = !enabled;
+      composerHint.textContent = hint || (enabled ? 'Enter sendet. Shift+Enter fügt keine neue Zeile ein.' : 'Wähle einen Freund, um zu schreiben.');
+    }
+
+    async function openChatForSelectedPeer() {
+      if (!selectedPeer) return;
+      const rel = selectedRelationship || await getRelationshipStatus(selectedPeer.uid);
+      selectedRelationship = rel;
+
+      if (rel.status !== 'FRIENDS') {
+        stopListeningMessages();
+        clearNode(messagesContainer);
+        renderMessages(messagesContainer, [], currentUser?.uid);
+        setComposerEnabled(false, rel.status === 'BLOCKED' ? 'Chat gesperrt.' : 'Freundschaft erforderlich.');
+        return;
+      }
+
+      const chatId = await createOrGetChat(selectedPeer.uid);
+
+      stopListeningMessages();
+      listenMessages(chatId, (messages) => {
+        renderMessages(messagesContainer, messages, currentUser.uid);
+      });
+
+      setComposerEnabled(true, 'Enter sendet. Shift+Enter fügt keine neue Zeile ein.');
+    }
+
+    async function refreshSelectedPeer() {
+      if (!selectedPeer) {
+        selectedRelationship = null;
+        selectedName.textContent = 'Keine Unterhaltung gewählt';
+        selectedMeta.textContent = 'Suche eine Person oder wähle einen Freund aus.';
+        selectedAvatar.innerHTML = '';
+        setComposerEnabled(false, 'Wähle einen Freund, um zu schreiben.');
+        clearNode(chatActions);
+        stopListeningMessages();
+        clearNode(messagesContainer);
+        renderMessages(messagesContainer, [], currentUser?.uid);
+        return;
+      }
+
+      selectedRelationship = await getRelationshipStatus(selectedPeer.uid);
+
+      setAvatar(selectedAvatar, selectedPeer);
+      selectedName.textContent = selectedPeer.name || 'Unbekannt';
+      const stateLabel = {
+        FRIENDS: 'Freund',
+        REQUEST_SENT: 'Anfrage gesendet',
+        REQUEST_RECEIVED: 'Anfrage erhalten',
+        BLOCKED: 'Blockiert',
+        NONE: 'Kein Kontakt'
+      }[selectedRelationship.status] || 'Kein Kontakt';
+
+      selectedMeta.textContent = selectedPeer.bio || selectedPeer.email || stateLabel;
+      await renderChatActions();
+
+      if (selectedRelationship.status === 'FRIENDS') {
+        await openChatForSelectedPeer();
+      } else {
+        stopListeningMessages();
+        clearNode(messagesContainer);
+        renderMessages(messagesContainer, [], currentUser?.uid);
+        setComposerEnabled(false, selectedRelationship.status === 'BLOCKED' ? 'Chat gesperrt.' : 'Freundschaft erforderlich.');
+      }
+    }
+
+    function renderUserList(users, container, kind) {
+      clearNode(container);
+
+      if (!users.length) {
+        const empty = document.createElement('div');
+        empty.className = 'empty-mini';
+        empty.textContent = kind === 'friends'
+          ? 'Noch keine Freunde.'
+          : kind === 'incoming'
+            ? 'Keine eingehenden Anfragen.'
+            : kind === 'outgoing'
+              ? 'Keine ausgehenden Anfragen.'
+              : 'Keine blockierten Nutzer.';
+        container.appendChild(empty);
+        return;
+      }
+
+      users.forEach((entry) => {
+        const user = entry.user || entry;
+        const card = makeCardLine(user, user.bio || user.email);
+
+        const actions = document.createElement('div');
+        actions.className = 'list-item-actions';
+
+        if (kind === 'friends') {
+          actions.append(
+            createActionButton('Chat', 'btn-soft', async () => {
+              await selectPeer(user, true);
+            }),
+            createActionButton('Entfernen', 'btn-danger', async () => {
+              const ok = confirm(`Freund entfernen: ${user.name}?`);
+              if (!ok) return;
+              await removeFriend(user.uid);
+              showToast('Freund entfernt', 'success');
+              await refreshAllLists();
+            }),
+            createActionButton('Blockieren', 'btn-ghost', async () => {
+              const ok = confirm(`User blockieren: ${user.name}?`);
+              if (!ok) return;
+              await blockUser(user.uid);
+              showToast('User blockiert', 'success');
+              await refreshAllLists();
+            })
+          );
+        }
+
+        if (kind === 'incoming') {
+          actions.append(
+            createActionButton('Annehmen', 'btn-primary', async () => {
+              await acceptRequest(user.uid);
+              showToast('Freundschaft bestätigt', 'success');
+              await refreshAllLists();
+              await selectPeer(user, true);
+            }),
+            createActionButton('Ablehnen', 'btn-soft', async () => {
+              await rejectRequest(user.uid);
+              showToast('Anfrage abgelehnt', 'success');
+              await refreshAllLists();
+            }),
+            createActionButton('Blockieren', 'btn-ghost', async () => {
+              const ok = confirm(`User blockieren: ${user.name}?`);
+              if (!ok) return;
+              await blockUser(user.uid);
+              showToast('User blockiert', 'success');
+              await refreshAllLists();
+            })
+          );
+        }
+
+        if (kind === 'outgoing') {
+          actions.append(
+            createActionButton('Zurückziehen', 'btn-danger', async () => {
+              await cancelRequest(user.uid);
+              showToast('Anfrage zurückgezogen', 'success');
+              await refreshAllLists();
+            })
+          );
+        }
+
+        if (kind === 'blocked') {
+          actions.append(
+            createActionButton('Entblocken', 'btn-primary', async () => {
+              await unblockUser(user.uid);
+              showToast('Entblockt', 'success');
+              await refreshAllLists();
+            })
+          );
+        }
+
+        card.append(actions);
+        card.addEventListener('click', async () => {
+          if (kind === 'friends' || kind === 'incoming' || kind === 'outgoing') {
+            await selectPeer(user, kind === 'friends');
+          } else {
+            await selectPeer(user, false);
+          }
+        });
+
+        container.appendChild(card);
+      });
+    }
+
+    function renderSearchResults(usersWithRel) {
+      clearNode(searchResults);
+
+      if (!activeSearchTerm) {
+        const empty = document.createElement('div');
+        empty.className = 'empty-mini';
+        empty.textContent = 'Tippe einen Namen oder eine E-Mail ein.';
+        searchResults.appendChild(empty);
+        return;
+      }
+
+      if (!usersWithRel.length) {
+        const empty = document.createElement('div');
+        empty.className = 'empty-mini';
+        empty.textContent = 'Keine Treffer.';
+        searchResults.appendChild(empty);
+        return;
+      }
+
+      usersWithRel.forEach(({ user, rel }) => {
+        const card = document.createElement('div');
+        card.className = 'search-item card-soft';
+
+        const left = document.createElement('button');
+        left.type = 'button';
+        left.className = 'search-item-main';
+
+        const avatar = document.createElement('div');
+        avatar.className = 'avatar avatar-sm';
+        setAvatar(avatar, user);
+
+        const textBox = document.createElement('div');
+        textBox.className = 'list-item-copy';
+
+        const title = document.createElement('strong');
+        title.textContent = user.name || 'Unbekannt';
+
+        const meta = document.createElement('div');
+        meta.className = 'muted tiny';
+        meta.textContent = user.bio || user.email || '';
+
+        const badges = document.createElement('div');
+        badges.className = 'badge-row';
+        badges.append(statusBadge(rel.status, rel.status === 'FRIENDS' ? 'success' : rel.status === 'REQUEST_SENT' || rel.status === 'REQUEST_RECEIVED' ? 'warning' : rel.status === 'BLOCKED' ? 'danger' : 'neutral'));
+
+        textBox.append(title, meta, badges);
+        left.append(avatar, textBox);
+
+        left.addEventListener('click', async () => {
+          await selectPeer(user, rel.status === 'FRIENDS');
+        });
+
+        const actions = document.createElement('div');
+        actions.className = 'list-item-actions';
+
+        if (rel.status === 'NONE') {
+          actions.append(
+            createActionButton('Anfragen', 'btn-primary', async () => {
+              await sendRequest(user.uid);
+              showToast('Anfrage gesendet', 'success');
+              await refreshAllLists();
+              await rerenderSearch();
+            }),
+            createActionButton('Blockieren', 'btn-ghost', async () => {
+              const ok = confirm(`User blockieren: ${user.name}?`);
+              if (!ok) return;
+              await blockUser(user.uid);
+              showToast('User blockiert', 'success');
+              await refreshAllLists();
+              await rerenderSearch();
+            })
+          );
+        }
+
+        if (rel.status === 'REQUEST_SENT') {
+          actions.append(
+            createActionButton('Zurückziehen', 'btn-danger', async () => {
+              await cancelRequest(user.uid);
+              showToast('Anfrage zurückgezogen', 'success');
+              await refreshAllLists();
+              await rerenderSearch();
+            })
+          );
+        }
+
+        if (rel.status === 'REQUEST_RECEIVED') {
+          actions.append(
+            createActionButton('Annehmen', 'btn-primary', async () => {
+              await acceptRequest(user.uid);
+              showToast('Freundschaft bestätigt', 'success');
+              await refreshAllLists();
+              await rerenderSearch();
+              await selectPeer(user, true);
+            }),
+            createActionButton('Ablehnen', 'btn-soft', async () => {
+              await rejectRequest(user.uid);
+              showToast('Anfrage abgelehnt', 'success');
+              await refreshAllLists();
+              await rerenderSearch();
+            })
+          );
+        }
+
+        if (rel.status === 'FRIENDS') {
+          actions.append(
+            createActionButton('Chat', 'btn-primary', async () => {
+              await selectPeer(user, true);
+            }),
+            createActionButton('Entfernen', 'btn-soft', async () => {
+              const ok = confirm(`Freund entfernen: ${user.name}?`);
+              if (!ok) return;
+              await removeFriend(user.uid);
+              showToast('Freund entfernt', 'success');
+              await refreshAllLists();
+              await rerenderSearch();
+            })
+          );
+        }
+
+        if (rel.status === 'BLOCKED') {
+          if (rel.blockedByMe) {
+            actions.append(
+              createActionButton('Entblocken', 'btn-primary', async () => {
+                await unblockUser(user.uid);
+                showToast('Entblockt', 'success');
+                await refreshAllLists();
+                await rerenderSearch();
+              })
+            );
+          } else {
+            actions.append(statusBadge('Blockiert', 'danger'));
+          }
+        }
+
+        card.append(left, actions);
+        searchResults.appendChild(card);
+      });
+    }
+
+    async function rerenderSearch() {
+      const term = activeSearchTerm.trim();
+      if (!term) {
+        renderSearchResults([]);
+        return;
+      }
+
+      const users = await searchUsers(term);
+      const mapped = await Promise.all(users.map(async (user) => ({
+        user,
+        rel: await getRelationshipStatus(user.uid)
+      })));
+      renderSearchResults(mapped);
+    }
+
+    async function selectPeer(user, openChat = false) {
+      selectedPeer = user;
+      await refreshSelectedPeer();
+      if (openChat && selectedRelationship?.status === 'FRIENDS') {
+        await openChatForSelectedPeer();
+      }
+    }
+
+    async function refreshAllLists() {
+      const [friends, incoming, outgoing, blocked] = await Promise.all([
+        loadFriends(),
+        loadIncomingRequests(),
+        loadOutgoingRequests(),
+        loadBlockedUsers()
+      ]);
+
+      friendsData = friends;
+      incomingData = incoming;
+      outgoingData = outgoing;
+      blockedData = blocked;
+
+      renderUserList(friendsData, friendsList, 'friends');
+      renderUserList(incomingData, incomingRequestsList, 'incoming');
+      renderUserList(outgoingData, outgoingRequestsList, 'outgoing');
+      renderUserList(blockedData, blockedUsersList, 'blocked');
+      await refreshCounts();
+
+      if (selectedPeer) {
+        await refreshSelectedPeer();
+      }
+    }
+
+    function bindRealtimeLists() {
+      if (listenersReady) return;
+      listenersReady = true;
+
+      friendsUnsub = listenFriends((users) => {
+        friendsData = users;
+        renderUserList(friendsData, friendsList, 'friends');
+        refreshCounts();
+      });
+
+      incomingUnsub = listenIncomingRequests((users) => {
+        incomingData = users;
+        renderUserList(incomingData, incomingRequestsList, 'incoming');
+        refreshCounts();
+      });
+
+      outgoingUnsub = listenOutgoingRequests((users) => {
+        outgoingData = users;
+        renderUserList(outgoingData, outgoingRequestsList, 'outgoing');
+        refreshCounts();
+      });
+
+      blockedUnsub = listenBlockedUsers((users) => {
+        blockedData = users;
+        renderUserList(blockedData, blockedUsersList, 'blocked');
+        refreshCounts();
+      });
+    }
+
+    async function initProfile() {
+      currentProfile = await loadProfile();
+      renderCurrentUser(currentProfile);
+    }
+
+    logoutBtn.addEventListener('click', async () => {
+      await logout();
+      window.location.replace('index.html');
+    });
+
+    searchInput.addEventListener('input', debounce(async () => {
+      activeSearchTerm = searchInput.value.trim();
+      await rerenderSearch();
+    }, 180));
+
+    profileForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      try {
+        let photoURL = profilePhotoURL.value.trim();
+        const file = profilePhotoFile.files?.[0] || null;
+
+        if (file) {
+          photoURL = await uploadProfileImage(file);
+        }
+
+        await updateProfile({
+          name: profileName.value.trim(),
+          bio: profileBio.value.trim(),
+          photoURL
+        });
+
+        currentProfile = await loadProfile();
+        renderCurrentUser(currentProfile);
+        showToast('Profil gespeichert', 'success');
+        profilePhotoFile.value = '';
+        await refreshAllLists();
+        if (activeSearchTerm) {
+          await rerenderSearch();
+        }
+      } catch (error) {
+        showToast(error.message || 'Profil konnte nicht gespeichert werden', 'error');
+      }
+    });
+
+    // chat.html SCRIPT FIX (ERSATZ für messageForm handler)
+
+    messageForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const text = messageInput.value.trim();
+
+      if (!text) return;
+
+      try {
+        await sendMessage(text);
+        messageInput.value = '';
+      } catch (err) {
+        console.error(err);
+        showToast(err.message, 'error');
+      }
+    });
+
+    messageInput.addEventListener('keydown', async (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        messageForm.requestSubmit();
+      }
+    });
+
+    messageInput.addEventListener('input', () => {
+      messageInput.style.height = 'auto';
+      messageInput.style.height = `${Math.min(messageInput.scrollHeight, 160)}px`;
+    });
+
+    authStateListener(async (user) => {
+      if (!user) {
+        window.location.replace('index.html');
+        return;
+      }
+
+      currentUser = user;
+      await initProfile();
+      bindRealtimeLists();
+      await refreshAllLists();
+      await rerenderSearch();
+      if (selectedPeer) {
+        await refreshSelectedPeer();
+      } else {
+        await refreshSelectedPeer();
+      }
+    });
+  </script>
+</body>
+
+</html>

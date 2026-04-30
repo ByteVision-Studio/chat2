@@ -1,0 +1,190 @@
+<!-- index.html -->
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pulse Chat</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body class="auth-page">
+  <div class="auth-bg-orb auth-bg-orb-1"></div>
+  <div class="auth-bg-orb auth-bg-orb-2"></div>
+
+  <main class="auth-layout">
+    <section class="auth-hero card">
+      <div class="brand-mark">P</div>
+      <p class="eyebrow">Realtime Social Messaging</p>
+      <h1>Pulse Chat</h1>
+      <p class="hero-copy">
+        Moderne 1:1 Chats, Freundschaftssystem, Profile und schnelle Suche in einer sauberen SaaS-Oberfläche.
+      </p>
+
+      <div class="feature-grid">
+        <article class="feature-tile">
+          <span class="feature-icon">⚡</span>
+          <strong>Echtzeit</strong>
+          <span>Messages via Firestore onSnapshot</span>
+        </article>
+        <article class="feature-tile">
+          <span class="feature-icon">👥</span>
+          <strong>Freunde</strong>
+          <span>Anfragen, Blockieren, Entfernen</span>
+        </article>
+        <article class="feature-tile">
+          <span class="feature-icon">🔎</span>
+          <strong>Suche</strong>
+          <span>Name, E-Mail, Live-Filter</span>
+        </article>
+        <article class="feature-tile">
+          <span class="feature-icon">🧩</span>
+          <strong>Profile</strong>
+          <span>Avatar, Bio, editierbar</span>
+        </article>
+      </div>
+
+      <div class="hero-stats">
+        <div class="stat-card">
+          <strong>Clean UI</strong>
+          <span>Helles Design mit klarer Hierarchie</span>
+        </div>
+        <div class="stat-card">
+          <strong>Vanilla JS</strong>
+          <span>Keine Frameworks, modulare Architektur</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="auth-card card">
+      <div class="auth-header">
+        <div>
+          <p class="eyebrow">Zugang</p>
+          <h2 id="formTitle">Login</h2>
+        </div>
+        <div class="toggle-switch" role="tablist" aria-label="Auth Modus">
+          <button id="showLogin" class="toggle-btn active" type="button">Login</button>
+          <button id="showRegister" class="toggle-btn" type="button">Registrieren</button>
+        </div>
+      </div>
+
+      <form id="loginForm" class="auth-form">
+        <label class="field">
+          <span>E-Mail</span>
+          <input id="loginEmail" type="email" placeholder="name@firma.de" autocomplete="email" required />
+        </label>
+
+        <label class="field">
+          <span>Passwort</span>
+          <input id="loginPassword" type="password" placeholder="••••••••" autocomplete="current-password" required />
+        </label>
+
+        <button class="btn btn-primary btn-full" type="submit">Einloggen</button>
+        <p class="form-error" id="loginError" aria-live="polite"></p>
+      </form>
+
+      <form id="registerForm" class="auth-form hidden">
+        <label class="field">
+          <span>Name</span>
+          <input id="registerName" type="text" placeholder="Max Mustermann" autocomplete="name" required />
+        </label>
+
+        <label class="field">
+          <span>E-Mail</span>
+          <input id="registerEmail" type="email" placeholder="name@firma.de" autocomplete="email" required />
+        </label>
+
+        <label class="field">
+          <span>Passwort</span>
+          <input id="registerPassword" type="password" placeholder="Mindestens 6 Zeichen" autocomplete="new-password" required />
+        </label>
+
+        <label class="field">
+          <span>Profilbild URL (optional)</span>
+          <input id="registerPhotoURL" type="url" placeholder="https://..." />
+        </label>
+
+        <label class="field">
+          <span>Bio (optional)</span>
+          <textarea id="registerBio" rows="3" placeholder="Kurze Vorstellung"></textarea>
+        </label>
+
+        <button class="btn btn-primary btn-full" type="submit">Account erstellen</button>
+        <p class="form-error" id="registerError" aria-live="polite"></p>
+      </form>
+    </section>
+  </main>
+
+  <script type="module">
+    import { authStateListener, login, register } from './js/auth.js';
+    import { showToast } from './js/utils.js';
+
+    const loginForm = document.getElementById('loginForm');
+    const registerForm = document.getElementById('registerForm');
+    const showLoginBtn = document.getElementById('showLogin');
+    const showRegisterBtn = document.getElementById('showRegister');
+    const formTitle = document.getElementById('formTitle');
+
+    const loginError = document.getElementById('loginError');
+    const registerError = document.getElementById('registerError');
+
+    const loginEmail = document.getElementById('loginEmail');
+    const loginPassword = document.getElementById('loginPassword');
+
+    const registerName = document.getElementById('registerName');
+    const registerEmail = document.getElementById('registerEmail');
+    const registerPassword = document.getElementById('registerPassword');
+    const registerPhotoURL = document.getElementById('registerPhotoURL');
+    const registerBio = document.getElementById('registerBio');
+
+    function setMode(mode) {
+      const isLogin = mode === 'login';
+      loginForm.classList.toggle('hidden', !isLogin);
+      registerForm.classList.toggle('hidden', isLogin);
+      showLoginBtn.classList.toggle('active', isLogin);
+      showRegisterBtn.classList.toggle('active', !isLogin);
+      formTitle.textContent = isLogin ? 'Login' : 'Registrierung';
+      loginError.textContent = '';
+      registerError.textContent = '';
+    }
+
+    showLoginBtn.addEventListener('click', () => setMode('login'));
+    showRegisterBtn.addEventListener('click', () => setMode('register'));
+
+    loginForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      loginError.textContent = '';
+      try {
+        await login(loginEmail.value.trim(), loginPassword.value);
+        showToast('Login erfolgreich', 'success');
+        window.location.replace('chat.html');
+      } catch (error) {
+        loginError.textContent = error.message || 'Login fehlgeschlagen';
+      }
+    });
+
+    registerForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      registerError.textContent = '';
+      try {
+        await register(
+          registerName.value.trim(),
+          registerEmail.value.trim(),
+          registerPassword.value,
+          registerPhotoURL.value.trim(),
+          registerBio.value.trim()
+        );
+        showToast('Account erstellt', 'success');
+        window.location.replace('chat.html');
+      } catch (error) {
+        registerError.textContent = error.message || 'Registrierung fehlgeschlagen';
+      }
+    });
+
+    authStateListener((user) => {
+      if (user) {
+        window.location.replace('chat.html');
+      }
+    });
+  </script>
+</body>
+</html>
